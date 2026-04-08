@@ -1,0 +1,90 @@
+name: 'PQC Migration Scanner'
+description: 'Scan for post-quantum cryptography vulnerabilities'
+author: 'PQC Scanner Team'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Path to scan (default: current directory)'
+    required: false
+    default: '.'
+  
+  severity:
+    description: 'Minimum severity level (critical|warning|info)'
+    required: false
+    default: 'info'
+  
+  fail-on-critical:
+    description: 'Fail build if critical issues found'
+    required: false
+    default: 'true'
+  
+  generate-badge:
+    description: 'Generate PQC readiness badge'
+    required: false
+    default: 'false'
+  
+  output-format:
+    description: 'Report format (text|json|markdown)'
+    required: false
+    default: 'markdown'
+
+outputs:
+  readiness-score:
+    description: 'PQC readiness score (0-100)'
+  
+  critical-count:
+    description: 'Number of critical issues'
+  
+  warning-count:
+    description: 'Number of warning issues'
+  
+  report-path:
+    description: 'Path to generated report'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install PQC Scanner
+      shell: bash
+      run: pip install pqc-migration-scanner
+    
+    - name: Run scan
+      shell: bash
+      run: |
+        pqc-scan ${{ inputs.path }} \
+          --format ${{ inputs.output-format }} \
+          --severity ${{ inputs.severity }} \
+          --output pqc-report.${{ inputs.output-format == 'markdown' && 'md' || inputs.output-format }} \
+          ${{ inputs.generate-badge == 'true' && '--badge' || '' }}
+    
+    - name: Parse results
+      shell: bash
+      id: parse
+      run: |
+        if [ -f pqc-report.json ]; then
+          SCORE=$(jq -r '.readiness_score' pqc-report.json)
+          CRITICAL=$(jq -r '.summary.critical' pqc-report.json)
+          WARNING=$(jq -r '.summary.warning' pqc-report.json)
+          echo "readiness-score=$SCORE" >> $GITHUB_OUTPUT
+          echo "critical-count=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "warning-count=$WARNING" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Fail on critical issues
+      shell: bash
+      if: inputs.fail-on-critical == 'true'
+      run: |
+        CRITICAL=$(jq -r '.summary.critical' pqc-report.json 2>/dev/null || echo "0")
+        if [ "$CRITICAL" -gt "0" ]; then
+          echo "::error::Found $CRITICAL critical PQC issues"
+          exit 1
+        fi
