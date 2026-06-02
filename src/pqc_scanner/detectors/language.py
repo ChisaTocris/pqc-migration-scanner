@@ -4,7 +4,7 @@ Language-specific detector for quantum-vulnerable cryptographic APIs.
 
 import re
 from pathlib import Path
-from typing import List, NamedTuple
+from typing import ClassVar, List, NamedTuple
 
 from pqc_scanner.models import Issue, Severity
 
@@ -20,7 +20,7 @@ class LanguageCryptoPattern(NamedTuple):
 class LanguageCryptoDetector:
     """Detects direct use of classical public-key cryptography APIs."""
 
-    PATTERNS = [
+    PATTERNS: ClassVar[List[LanguageCryptoPattern]] = [
         LanguageCryptoPattern(
             r"\bec\.generate_private_key\s*\(",
             Severity.CRITICAL,
@@ -39,13 +39,22 @@ class LanguageCryptoDetector:
             "migration path to ML-DSA-backed signing.",
         ),
         LanguageCryptoPattern(
-            r"\b(?:RSA|rsa)\.generate(?:_private_key)?\s*\(",
+            r"\b(?:RSA|rsa)\.generate(?:_private_key)?\b\s*\(",
             Severity.CRITICAL,
             "Python RSA key generation detected",
             "RSA key generation creates signatures or key transport primitives that are "
             "not quantum-resistant.",
             "Prefer configurable key providers and prepare hybrid or ML-DSA signing for "
             "new credentials.",
+        ),
+        LanguageCryptoPattern(
+            r"\bnacl\.(?:public\.PrivateKey|signing\.SigningKey)(?:\.generate)?\s*\(",
+            Severity.CRITICAL,
+            "PyNaCl public-key primitive detected",
+            "PyNaCl public-key signing and key-exchange primitives use Ed25519 or "
+            "Curve25519, which are not quantum-resistant.",
+            "Inventory PyNaCl public-key call sites and prepare ML-DSA signatures or "
+            "ML-KEM/hybrid key establishment for long-lived credentials.",
         ),
         LanguageCryptoPattern(
             r"\bcrypto\.(?:generateKeyPair|generateKeyPairSync)\s*\(\s*[\"'](?:rsa|ec|dsa)[\"']",
@@ -99,12 +108,39 @@ class LanguageCryptoDetector:
             "applicable.",
         ),
         LanguageCryptoPattern(
+            r"\bcurve25519\.(?:X25519|ScalarBaseMult|ScalarMult)\s*\(",
+            Severity.WARNING,
+            "Go Curve25519 key exchange detected",
+            "Go Curve25519/X25519 key exchange is a classical elliptic-curve primitive "
+            "that is not quantum-resistant.",
+            "Inventory X25519 key exchange paths and plan hybrid ML-KEM key "
+            "establishment for PQC migration.",
+        ),
+        LanguageCryptoPattern(
+            r"\bring::(?:signature::(?:EcdsaKeyPair|RsaKeyPair)|agreement::EphemeralPrivateKey)\b",
+            Severity.CRITICAL,
+            "Rust ring classical public-key primitive detected",
+            "Rust ring public-key APIs for ECDSA, RSA, and ECDH-style agreement are "
+            "quantum-vulnerable.",
+            "Centralize ring public-key usage and prepare ML-DSA signatures or "
+            "ML-KEM/hybrid key establishment where supported.",
+        ),
+        LanguageCryptoPattern(
             r"\bKeyPairGenerator\.getInstance\s*\(\s*[\"'](?:RSA|EC|ECDSA|DSA|DH)[\"']",
             Severity.CRITICAL,
             "Java classical key-pair generator detected",
             "Java is generating RSA, EC, DSA, or DH key pairs that require PQC migration.",
             "Centralize KeyPairGenerator selection and add a path for ML-DSA signatures "
             "or ML-KEM key establishment.",
+        ),
+        LanguageCryptoPattern(
+            r"\bKeyFactory\.getInstance\s*\(\s*[\"'](?:RSA|EC|ECDSA|DSA|DH)[\"']",
+            Severity.WARNING,
+            "Java classical key factory detected",
+            "Java KeyFactory is parsing or materializing classical public-key algorithms "
+            "that require PQC migration planning.",
+            "Inventory imported key formats and ensure key parsing is routed through an "
+            "algorithm-agile provider.",
         ),
         LanguageCryptoPattern(
             r"\b(?:Signature|KeyAgreement|Cipher)\.getInstance\s*\(\s*[\"'][^\"']*(?:RSA|ECDSA|ECDH|DSA|DH)[^\"']*[\"']",
@@ -139,6 +175,9 @@ class LanguageCryptoDetector:
         for crypto_pattern in self.PATTERNS:
             for match in re.finditer(crypto_pattern.pattern, content, re.IGNORECASE):
                 line_number = content[: match.start()].count("\n") + 1
+                if self._is_comment_only_line(content, match.start()):
+                    continue
+
                 issues.append(
                     Issue(
                         file_path=file_path,
@@ -153,3 +192,13 @@ class LanguageCryptoDetector:
                 )
 
         return issues
+
+    def _is_comment_only_line(self, content: str, match_start: int) -> bool:
+        """Skip obvious comment-only matches to reduce noisy findings."""
+        line_start = content.rfind("\n", 0, match_start) + 1
+        line_end = content.find("\n", match_start)
+        if line_end == -1:
+            line_end = len(content)
+
+        line = content[line_start:line_end].lstrip()
+        return line.startswith(("#", "//", "/*", "*"))
