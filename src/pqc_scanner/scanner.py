@@ -2,17 +2,17 @@
 Core scanning engine for PQC vulnerabilities
 """
 
-import re
 from pathlib import Path
-from typing import List, Optional, Set
-from datetime import datetime, timedelta
+from typing import List, Optional
+from datetime import datetime
 
-from pqc_scanner.models import Issue, Report, Severity
+from pqc_scanner.models import Issue, Report
 from pqc_scanner.detectors.openssl import OpenSSLDetector
 from pqc_scanner.detectors.tls import TLSDetector
 from pqc_scanner.detectors.cipher import CipherDetector
 from pqc_scanner.detectors.keys import KeyDetector
 from pqc_scanner.detectors.hardcoded import HardcodedCryptoDetector
+from pqc_scanner.detectors.language import LanguageCryptoDetector
 
 
 class PQCScanner:
@@ -26,6 +26,7 @@ class PQCScanner:
         ".go",
         ".rs",
         ".java",
+        ".cs",
         ".c",
         ".cpp",
         ".h",
@@ -76,6 +77,7 @@ class PQCScanner:
             CipherDetector(),
             KeyDetector(),
             HardcodedCryptoDetector(),
+            LanguageCryptoDetector(),
         ]
 
         # Calculate deadline
